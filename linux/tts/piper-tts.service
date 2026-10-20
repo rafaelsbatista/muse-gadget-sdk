@@ -1,0 +1,18 @@
+[Unit]
+Description=Piper TTS HTTP server (pt-BR Faber) for muse-gadget
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/Group and ExecStart paths for your install.
+User=rafael
+Group=rafael
+ExecStart=/usr/bin/python3 /home/rafael/piper/piper_server.py
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/home/rafael/piper-server.log
+StandardError=append:/home/rafael/piper-server.log
+
+[Install]
+WantedBy=multi-user.target

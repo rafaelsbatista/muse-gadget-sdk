@@ -43,6 +43,17 @@ menu "ESP32 Device SDK"
             Internal builds that intentionally ship without an SDK token
             turn this off.
 
+    config PIPER_TTS_URL
+        string "Piper TTS server URL (http://host:port/tts); empty disables TTS"
+        default ""
+        help
+            POST the reply text to this URL and play the returned MP3 as
+            speech on the gadget. The server is expected to be a Piper-based
+            TTS proxy (see linux/tts/piper-tts-server.py in the forked repo).
+            Leave empty to keep the SDK's silent caption-pacing fallback.
+            Set this through a local sdkconfig fragment (not committed) so
+            the URL stays out of the firmware source and the git history.
+
     config HOMEHUB_WIFI_SSID
         string "WiFi SSID override (dev iteration)"
         default ""

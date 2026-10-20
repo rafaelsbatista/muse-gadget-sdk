@@ -56,6 +56,7 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_tls.h"
+#include "esp_http_client.h"   /* MUSE_TTS_PIPER */
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/queue.h"
@@ -1508,6 +1509,8 @@ static void on_chat_ack(stream_t *s)
 
 /* ---- Turn: speech ---- */
 
+static void tts_data(const uint8_t *data, size_t len);   /* MUSE_TTS_PIPER forward decl */
+
 static void start_tts(void)
 {
     if (s_turn.tts_msg >= 0) {
@@ -1533,13 +1536,67 @@ static void start_tts(void)
          * end. decode() plays it at the speaker's volume, captions following,
          * and finishes the message once it's drained.
          */
+        /* MUSE_TTS_PIPER: POST reply text to Pi's Piper server and play the returned MP3.
+         * The silence fallback below (m.pcm_frames by char count, s_turn.silent = true)
+         * stays as a fallback for network / server errors. */
         m.pcm_start = s_turn.pcm_out;
-        m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+        m.pcm_frames = 0;
         m.tts = TTS_ACTIVE;
         s_turn.tts_msg = i;
-        s_turn.silent = true;
-        ESP_LOGI(TAG, "showing message %s (%u chars)", m.id, (unsigned)m.len);
+        s_turn.silent = false;
+        s_turn.mp3_len = 0;
+        s_turn.mp3_ended = false;
+        s_turn.kbps = 0;
+        s_turn.down_rate = 0;
+        mp3dec_init(&s_turn.dec);
         show_reply_start(m);
+        const char *reply_text = s_turn.texts ? (s_turn.texts + (&m - s_turn.msgs) * TEXT_MAX) : "";
+        size_t reply_len = strlen(reply_text);
+        ESP_LOGI(TAG, "piper TTS: POSTing %u chars for msg %s", (unsigned)reply_len, m.id);
+        bool ok = false;
+        if (reply_len > 0 && CONFIG_PIPER_TTS_URL[0] != '\0') {
+            esp_http_client_config_t cfg = {};
+            cfg.url = CONFIG_PIPER_TTS_URL;
+            cfg.timeout_ms = 20000;
+            cfg.method = HTTP_METHOD_POST;
+            esp_http_client_handle_t hc = esp_http_client_init(&cfg);
+            if (hc) {
+                esp_http_client_set_header(hc, "Content-Type", "text/plain");
+                esp_err_t err = esp_http_client_open(hc, (int)reply_len);
+                if (err == ESP_OK) {
+                    int wrote = esp_http_client_write(hc, reply_text, reply_len);
+                    if (wrote == (int)reply_len) {
+                        int64_t clen = esp_http_client_fetch_headers(hc);
+                        int status = esp_http_client_get_status_code(hc);
+                        ESP_LOGI(TAG, "piper TTS: HTTP %d, %lld bytes", status, (long long)clen);
+                        if (status == 200) {
+                            char buf[1024];
+                            int total = 0, n;
+                            while ((n = esp_http_client_read(hc, buf, sizeof(buf))) > 0) {
+                                tts_data((const uint8_t *)buf, (size_t)n);
+                                total += n;
+                            }
+                            ok = (total > 0);
+                            ESP_LOGI(TAG, "piper TTS: read %d bytes", total);
+                        }
+                    } else {
+                        ESP_LOGE(TAG, "piper TTS: short write %d / %u", wrote, (unsigned)reply_len);
+                    }
+                    esp_http_client_close(hc);
+                } else {
+                    ESP_LOGE(TAG, "piper TTS: open failed: %s", esp_err_to_name(err));
+                }
+                esp_http_client_cleanup(hc);
+            }
+        }
+        if (ok) {
+            s_turn.mp3_ended = true;   /* decode() drains the rest and finishes */
+        } else {
+            /* Fall back to silence-paced caption, same as the SDK default. */
+            m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+            s_turn.silent = true;
+            ESP_LOGW(TAG, "piper TTS: fell back to silent pacing");
+        }
         return;
     }
 }
