@@ -672,6 +672,9 @@ static void move_muse(int px, int y)
 /* MUSE_UI_V1 pin: short tap on a reply pins/unpins it.
  * When pinned, set_answer(-1) is a no-op so the reply stays until the next tap.
  */
+/* MUSE_UI_REPLAY include */
+#include "muse_chat.h"
+
 static bool s_reply_pinned;
 /* MUSE_UI_TTL: timestamp (seconds) when the SDK first tried to hide the reply
  * (i.e. speech ended). 0 means not armed yet. Non-zero + CONFIG_MUSE_REPLY_TTL_SEC
@@ -684,18 +687,12 @@ static void set_answer(int which);   /* forward decl */
 static void on_reply_clicked(lv_event_t *e)
 {
     (void)e;
+    /* MUSE_UI_REPLAY: tap on the reply now restarts the audio instead of
+     * dismissing. The mic-icon tap handles dismiss. */
     if (s_reply_pinned) {
-        s_reply_pinned = false;
-        /* MUSE_UI_TTL: clear the TTL timestamp on manual dismiss too. */
-        s_reply_speech_done_s = 0.0f;
-        /* MUSE_UI_V2_CLEAR: wipe the label text and hide it so the reply
-         * doesn't linger over the avatar after dismiss. */
-        if (s_reply_lbl) {
-            lv_label_set_text(s_reply_lbl, "");
-            lv_obj_add_flag(s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
-        }
-        set_answer(-1);
-        ESP_LOGI(TAG, "reply dismissed by tap");
+        s_reply_speech_done_s = 0.0f;   /* reset TTL countdown; tap counts as interaction */
+        muse_hatch_turn_replay();
+        ESP_LOGI(TAG, "reply tap: requested replay");
     }
 }
 

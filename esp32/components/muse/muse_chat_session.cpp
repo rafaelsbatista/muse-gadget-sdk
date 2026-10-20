@@ -155,6 +155,9 @@ static QueueHandle_t s_cmds, s_events;
 static StreamBufferHandle_t s_in, s_out;
 static std::atomic<uint32_t> s_gen{0};
 static std::atomic<bool> s_resting{false};
+/* MUSE_UI_REPLAY: UI task sets this; the chat task resets the current reply
+ * to TTS_QUEUED and restarts synthesis the next time start_tts() runs. */
+static std::atomic<bool> s_replay_requested{false};
 
 /* ---- Connection ---- */
 
@@ -1513,6 +1516,28 @@ static void tts_data(const uint8_t *data, size_t len);   /* MUSE_TTS_PIPER forwa
 
 static void start_tts(void)
 {
+    /* MUSE_UI_REPLAY: UI tap requested a restart. Reset the active or last
+     * spoken message back to TTS_QUEUED so the loop below re-synthesizes it. */
+    if (s_replay_requested.exchange(false, std::memory_order_acq_rel)) {
+        int target = s_turn.tts_msg;
+        if (target < 0) {
+            for (int i = s_turn.nmsgs - 1; i >= 0; i--) {
+                if (s_turn.msgs[i].len > 0) { target = i; break; }
+            }
+        }
+        if (target >= 0 && s_turn.texts) {
+            xStreamBufferReset(s_out);
+            s_turn.msgs[target].tts = TTS_QUEUED;
+            s_turn.msgs[target].pcm_frames = 0;
+            s_turn.tts_msg = -1;
+            s_turn.mp3_len = 0;
+            s_turn.mp3_ended = false;
+            s_turn.kbps = 0;
+            s_turn.down_rate = 0;
+            mp3dec_init(&s_turn.dec);
+            ESP_LOGI(TAG, "replay msg %d", target);
+        }
+    }
     if (s_turn.tts_msg >= 0) {
         return;
     }
@@ -2249,6 +2274,11 @@ extern "C" bool muse_hatch_turn_caption(size_t played, char *out, size_t cap)
     }
 
     return muse_hatch_caption_at(text, at, out, cap);
+}
+
+extern "C" void muse_hatch_turn_replay(void)
+{
+    s_replay_requested.store(true, std::memory_order_release);
 }
 
 extern "C" size_t muse_hatch_turn_read(int16_t *pcm, size_t frames, int wait_ms)

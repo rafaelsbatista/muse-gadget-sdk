@@ -107,6 +107,9 @@ muse_hatch_ev_t muse_hatch_turn_event(char *text, size_t cap);
  */
 bool muse_hatch_turn_caption(size_t played, char *out, size_t cap);
 
+/* MUSE_UI_REPLAY: request the current reply be re-synthesized and replayed. */
+void muse_hatch_turn_replay(void);
+
 /* Reply speech as 16 kHz mono. Waits up to wait_ms for some; returns frames read. */
 size_t muse_hatch_turn_read(int16_t *pcm, size_t frames, int wait_ms);
 
