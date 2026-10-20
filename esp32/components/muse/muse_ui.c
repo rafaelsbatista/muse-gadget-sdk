@@ -450,14 +450,36 @@ static void set_mic_color(uint32_t color)
     color_mic(s_mic_icon, color);   /* legacy face icon only */
 }
 
+/* MUSE_UI_MIC_DISMISS: track that the press was consumed as a dismiss so the
+ * release is swallowed too (otherwise we'd call muse_input_touch_talk(false)
+ * without a matching true, which confuses the voice state machine). */
+static bool s_mic_press_was_dismiss;
+
 static void on_touch_mic(lv_event_t *e)
 {
     switch (lv_event_get_code(e)) {
     case LV_EVENT_PRESSED:
+        if (s_answer >= 0) {
+            s_mic_press_was_dismiss = true;
+            s_reply_pinned = false;
+            s_reply_speech_done_s = 0.0f;
+            if (s_reply_lbl) {
+                lv_label_set_text(s_reply_lbl, "");
+                lv_obj_add_flag(s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
+            }
+            set_answer(-1);
+            ESP_LOGI(TAG, "mic icon tap: reply dismissed");
+            return;
+        }
+        s_mic_press_was_dismiss = false;
         muse_input_touch_talk(true);
         break;
     case LV_EVENT_RELEASED:
     case LV_EVENT_PRESS_LOST:
+        if (s_mic_press_was_dismiss) {
+            s_mic_press_was_dismiss = false;
+            return;
+        }
         muse_input_touch_talk(false);
         break;
     default:
