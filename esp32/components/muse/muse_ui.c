@@ -647,9 +647,37 @@ static void move_muse(int px, int y)
     lv_anim_start(&a);
 }
 
+/* MUSE_UI_V1 pin: short tap on a reply pins/unpins it.
+ * When pinned, set_answer(-1) is a no-op so the reply stays until the next tap.
+ */
+static bool s_reply_pinned;
+
+/* MUSE_UI_V2: tap on reply dismisses it so the avatar comes back. */
+static void set_answer(int which);   /* forward decl */
+
+static void on_reply_clicked(lv_event_t *e)
+{
+    (void)e;
+    if (s_reply_pinned) {
+        s_reply_pinned = false;
+        /* MUSE_UI_V2_CLEAR: wipe the label text and hide it so the reply
+         * doesn't linger over the avatar after dismiss. */
+        if (s_reply_lbl) {
+            lv_label_set_text(s_reply_lbl, "");
+            lv_obj_add_flag(s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+        set_answer(-1);
+        ESP_LOGI(TAG, "reply dismissed by tap");
+    }
+}
+
 /* Switches to answer layout `which`, or back to the usual one for -1. */
 static void set_answer(int which)
 {
+    /* MUSE_UI_V1: pinned reply blocks the hide transition */
+    if (which == -1 && s_reply_pinned) {
+        return;
+    }
     const answer_layout_t *was = s_answer >= 0 ? &s_answers[s_answer] : NULL;
     const answer_layout_t *l = which >= 0 ? &s_answers[which] : NULL;
     s_answer = which;
@@ -664,8 +692,33 @@ static void set_answer(int which)
             lv_obj_add_flag(l->hides[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    if (!muse_board->round && s_ring) {
-        lv_obj_set_flag(s_ring, LV_OBJ_FLAG_HIDDEN, l != NULL);   /* the reply runs past a rectangle's ring */
+    /* MUSE_UI_V1 + MUSE_UI_BIG: hide ring, page dots, avatar canvas, status chrome
+     * while a reply is shown so the big text has the whole screen. */
+    if (s_ring) {
+        lv_obj_set_flag(s_ring, LV_OBJ_FLAG_HIDDEN, l != NULL);
+    }
+    for (int i = 0; i < 2; i++) {
+        if (s_dots[i]) {
+            lv_obj_set_flag(s_dots[i], LV_OBJ_FLAG_HIDDEN, l != NULL);
+        }
+    }
+    if (s_canvas) {
+        lv_obj_set_flag(s_canvas, LV_OBJ_FLAG_HIDDEN, l != NULL);
+    }
+    if (s_state_lbl) {
+        lv_obj_set_flag(s_state_lbl, LV_OBJ_FLAG_HIDDEN, l != NULL);
+    }
+    if (s_name_lbl) {
+        lv_obj_set_flag(s_name_lbl, LV_OBJ_FLAG_HIDDEN, l != NULL);
+    }
+    if (s_mic_icon) {
+        lv_obj_set_flag(s_mic_icon, LV_OBJ_FLAG_HIDDEN, l != NULL);
+    }
+    if (s_aux_icon) {
+        lv_obj_set_flag(s_aux_icon, LV_OBJ_FLAG_HIDDEN, l != NULL);
+    }
+    if (s_speaker) {
+        lv_obj_set_flag(s_speaker, LV_OBJ_FLAG_HIDDEN, l != NULL);
     }
     if (l) {
         lv_obj_set_size(s_reply_lbl, l->w, l->h);
@@ -673,6 +726,10 @@ static void set_answer(int which)
         lv_obj_set_style_text_align(s_reply_lbl, l->align, 0);
     }
     move_muse(l ? l->px : s_canvas_px, l ? l->y : s_big_y);
+    /* MUSE_UI_V2: new reply auto-pins so it does not vanish on its own. */
+    if (which >= 0) {
+        s_reply_pinned = true;
+    }
 }
 
 /* Whether a reply `w` px wide fits across the screen `y` px from the centre. */
@@ -741,28 +798,24 @@ static void build_answer(lv_obj_t *face, int ring_in)
         int d = ring_in - spk_r - 4;   /* just inside the ring, even when swollen */
         spk_x = -(int)sqrtf((float)(d * d - spk_y * spk_y));
     }
-    const lv_font_t *font = caption_font();
+    /* MUSE_UI_V1: bigger font for reply only */
+    const lv_font_t *font = &lv_font_montserrat_28;
     int cw = lv_font_get_glyph_width(font, 'M', ' ');
     int pitch = lv_font_get_line_height(font) + CAPTION_LINE_SPACE;
 
+    /* MUSE_UI_BIG: fill the ring with the reply, avatar/chrome hidden in set_answer. */
     answer_layout_t *l = &s_answers[ANSWER_HEARD];
-    int cell = s_canvas_px / MUSE_PX_W - 1;
-    cell = cell > MINI_CELL_PX ? cell : MINI_CELL_PX;
-    l->px = MUSE_PX_W * cell;
+    l->px = s_canvas_px;      /* ignored while s_canvas is hidden */
     l->y = s_big_y;
     l->align = LV_TEXT_ALIGN_CENTER;
-    int h = 3 * pitch - CAPTION_LINE_SPACE;
-    int art_bottom = l->y + l->px / 2 - ART_BLANK_ROWS * cell;
-    set_reply_box(l, CAPTION_W / cw, 3, reply_bottom(CAPTION_W, ring_in) - h, cw, pitch);
-    for (int c = 24; c > l->cols; c--) {   /* wider if it still clears Muse */
-        int top = reply_bottom(c * cw, ring_in) - h;
-        if (top >= art_bottom + 6 && fits_across(c * cw, top, ring_in)) {
-            set_reply_box(l, c, 3, top, cw, pitch);
-            break;
-        }
-    }
-    if (l->top < art_bottom + 6) {
-        l->y -= art_bottom + 6 - l->top;   /* no room under Muse: it moves up */
+    {
+        int big_w = ring_in * 13 / 10;
+        int big_h = big_w * 7 / 8;
+        int big_cols = big_w / cw;
+        int big_lines = big_h / pitch;
+        if (big_cols < 6) big_cols = 6;
+        if (big_lines < 3) big_lines = 3;
+        set_reply_box(l, big_cols, big_lines, -big_h / 2, cw, pitch);
     }
 
     l = &s_answers[ANSWER_READ];
@@ -770,7 +823,7 @@ static void build_answer(lv_obj_t *face, int ring_in)
     l->px = MUSE_PX_W * MINI_CELL_PX;
     l->y = status_bottom + 2 + l->px / 2;   /* its sparkles clear of the status line */
     l->align = LV_TEXT_ALIGN_LEFT;
-    art_bottom = l->y + l->px / 2 - ART_BLANK_ROWS * MINI_CELL_PX;
+    int art_bottom = l->y + l->px / 2 - ART_BLANK_ROWS * MINI_CELL_PX;
     int top = (art_bottom > spk_y + spk_r ? art_bottom : spk_y + spk_r) + 8;
     set_reply_box(l, muse_board->rim_controls ? 13 : 16, 2, top, cw, pitch);
     /* The widest page isn't the biggest: a round screen narrows towards the bottom. */
@@ -795,6 +848,9 @@ static void build_answer(lv_obj_t *face, int ring_in)
     lv_label_set_long_mode(s_reply_lbl, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_remove_flag(s_reply_lbl, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
+    /* MUSE_UI_V1: tap toggles pin */
+    lv_obj_add_flag(s_reply_lbl, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_reply_lbl, on_reply_clicked, LV_EVENT_CLICKED, NULL);
 
     if (muse_board->touch && !muse_board->rim_controls) {
         build_speaker(face, spk_x, spk_y);
@@ -1540,6 +1596,11 @@ static void update_status(muse_mode_t mode, float now)
         if (mode == MUSE_MODE_THINKING || mode == MUSE_MODE_SPEAKING) {
             answer = layout;
         }
+        /* MUSE_UI_V2_FORCE: while a reply is pinned, keep it on screen even after
+         * the state leaves SPEAKING. The tap handler clears the pin to dismiss. */
+        if (s_reply_pinned && answer < 0) {
+            answer = s_answer >= 0 ? s_answer : layout;
+        }
     }
     if (answer != s_answer) {
         set_answer(answer);
@@ -1552,8 +1613,13 @@ static void update_status(muse_mode_t mode, float now)
             lv_obj_set_style_text_font(s_caption_lbl, muse_text_has_cjk(caption) ? caption_font() : &lv_font_unscii_8, 0);
         }
 #endif
-        lv_label_set_text(lbl, caption);
-        lv_obj_set_flag(lbl, LV_OBJ_FLAG_HIDDEN, !caption[0]);
+        /* MUSE_UI_V2_HOLD: while pinned, keep the last non-empty reply text
+         * on screen so the label stays visible and clickable. */
+        bool pinned_hold = (lbl == s_reply_lbl) && s_reply_pinned && !caption[0];
+        if (!pinned_hold) {
+            lv_label_set_text(lbl, caption);
+            lv_obj_set_flag(lbl, LV_OBJ_FLAG_HIDDEN, !caption[0]);
+        }
         if (s_reply_lbl) {
             lv_obj_add_flag(answer >= 0 ? s_caption_lbl : s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
         }

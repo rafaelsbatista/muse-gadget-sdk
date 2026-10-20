@@ -24,3 +24,13 @@ muse-simulator.ppm
 # Local gadget provisioning and original-device flash backups.
 .sdk-token
 /backups/
+
+# Local token / secret files
+sdkconfig.local-token
+.muse_token
+
+# Local build directories
+/esp32/build-*/
+
+# Backup copies made during local edits
+*.bak-*
