@@ -134,6 +134,18 @@ static lv_obj_t *s_name_lbl;    /* this gadget's own name, to tell it from the n
 static lv_obj_t *s_power_lbl;
 static lv_obj_t *s_caption_lbl;
 static lv_obj_t *s_reply_lbl;   /* full layout: the reply's page while answering */
+
+/* MUSE_UI_REPLAY: UI handlers call muse_hatch_turn_replay() declared here. */
+#include "muse_chat.h"
+
+/* MUSE_UI_V2 + MUSE_UI_TTL state. Declared up here so on_touch_mic and other
+ * early handlers can see them. */
+static bool s_reply_pinned;
+/* MUSE_UI_TTL: timestamp (seconds) when the SDK first tried to hide the reply
+ * (speech ended). 0 means not armed yet. Non-zero + CONFIG_MUSE_REPLY_TTL_SEC > 0
+ * triggers auto-dismiss once the elapsed time passes the TTL. */
+static float s_reply_speech_done_s = 0.0f;
+static void set_answer(int which);   /* forward decl: defined later */
 static lv_obj_t *s_meter[METER_SEGS];
 static lv_obj_t *s_speaker;
 static lv_obj_t *s_speaker_icon;
@@ -672,15 +684,6 @@ static void move_muse(int px, int y)
 /* MUSE_UI_V1 pin: short tap on a reply pins/unpins it.
  * When pinned, set_answer(-1) is a no-op so the reply stays until the next tap.
  */
-/* MUSE_UI_REPLAY include */
-#include "muse_chat.h"
-
-static bool s_reply_pinned;
-/* MUSE_UI_TTL: timestamp (seconds) when the SDK first tried to hide the reply
- * (i.e. speech ended). 0 means not armed yet. Non-zero + CONFIG_MUSE_REPLY_TTL_SEC
- * > 0 triggers auto-dismiss once the elapsed time passes the TTL. */
-static float s_reply_speech_done_s = 0.0f;
-
 /* MUSE_UI_V2: tap on reply dismisses it so the avatar comes back. */
 static void set_answer(int which);   /* forward decl */
 
