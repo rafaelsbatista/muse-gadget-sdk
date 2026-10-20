@@ -43,6 +43,17 @@ menu "ESP32 Device SDK"
             Internal builds that intentionally ship without an SDK token
             turn this off.
 
+    config MUSE_REPLY_TTL_SEC
+        int "Auto-dismiss a pinned reply this many seconds after speech ends (0 = never)"
+        default 30
+        range 0 3600
+        help
+            When a reply is on screen and the TTS audio has finished, start
+            a timer and dismiss the reply after this many seconds, returning
+            to the avatar. The timer resets whenever the user interacts with
+            the reply (tap to replay) or a new reply arrives. Set to 0 to
+            keep the current behaviour of staying forever until dismissed.
+
     config PIPER_TTS_URL
         string "Piper TTS server URL (http://host:port/tts); empty disables TTS"
         default ""

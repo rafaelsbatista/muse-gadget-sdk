@@ -651,6 +651,10 @@ static void move_muse(int px, int y)
  * When pinned, set_answer(-1) is a no-op so the reply stays until the next tap.
  */
 static bool s_reply_pinned;
+/* MUSE_UI_TTL: timestamp (seconds) when the SDK first tried to hide the reply
+ * (i.e. speech ended). 0 means not armed yet. Non-zero + CONFIG_MUSE_REPLY_TTL_SEC
+ * > 0 triggers auto-dismiss once the elapsed time passes the TTL. */
+static float s_reply_speech_done_s = 0.0f;
 
 /* MUSE_UI_V2: tap on reply dismisses it so the avatar comes back. */
 static void set_answer(int which);   /* forward decl */
@@ -660,6 +664,8 @@ static void on_reply_clicked(lv_event_t *e)
     (void)e;
     if (s_reply_pinned) {
         s_reply_pinned = false;
+        /* MUSE_UI_TTL: clear the TTL timestamp on manual dismiss too. */
+        s_reply_speech_done_s = 0.0f;
         /* MUSE_UI_V2_CLEAR: wipe the label text and hide it so the reply
          * doesn't linger over the avatar after dismiss. */
         if (s_reply_lbl) {
@@ -676,6 +682,10 @@ static void set_answer(int which)
 {
     /* MUSE_UI_V1: pinned reply blocks the hide transition */
     if (which == -1 && s_reply_pinned) {
+        /* MUSE_UI_TTL: start counting from the moment speech is done. */
+        if (s_reply_speech_done_s == 0.0f) {
+            s_reply_speech_done_s = (float)esp_timer_get_time() / 1e6f;
+        }
         return;
     }
     const answer_layout_t *was = s_answer >= 0 ? &s_answers[s_answer] : NULL;
@@ -727,7 +737,11 @@ static void set_answer(int which)
     }
     move_muse(l ? l->px : s_canvas_px, l ? l->y : s_big_y);
     /* MUSE_UI_V2: new reply auto-pins so it does not vanish on its own. */
+    /* MUSE_UI_TTL: new reply resets the TTL countdown. */
     if (which >= 0) {
+        if (s_answer < 0) {
+            s_reply_speech_done_s = 0.0f;
+        }
         s_reply_pinned = true;
     }
 }
@@ -1624,6 +1638,20 @@ static void update_status(muse_mode_t mode, float now)
             lv_obj_add_flag(answer >= 0 ? s_caption_lbl : s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
         }
     }
+    /* MUSE_UI_TTL: auto-dismiss a pinned reply after speech-done + TTL expired. */
+#if CONFIG_MUSE_REPLY_TTL_SEC > 0
+    if (s_reply_pinned && s_reply_speech_done_s > 0.0f &&
+        now - s_reply_speech_done_s > (float)CONFIG_MUSE_REPLY_TTL_SEC) {
+        ESP_LOGI(TAG, "reply TTL (%ds) elapsed, auto-dismissing", CONFIG_MUSE_REPLY_TTL_SEC);
+        s_reply_pinned = false;
+        s_reply_speech_done_s = 0.0f;
+        if (s_reply_lbl) {
+            lv_label_set_text(s_reply_lbl, "");
+            lv_obj_add_flag(s_reply_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+        set_answer(-1);
+    }
+#endif
     update_power(now);
 }
 
